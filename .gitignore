@@ -172,4 +172,4 @@ user_agents.json
 
 *.json
 
-bot/config/*
+bot/config/proxies.txt
