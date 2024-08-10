@@ -173,3 +173,5 @@ user_agents.json
 *.json
 
 bot/config/proxies.txt
+db/*.db
+/test.py

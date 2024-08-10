@@ -5,10 +5,11 @@ import argparse
 from itertools import cycle
 
 from pyrogram import Client
+from aiohttp_proxy import ProxyConnector
 from better_proxy import Proxy
 
 from bot.config import settings
-from bot.utils import logger
+from bot.utils import console_logger as logger
 from bot.core.tapper import run_tapper
 from bot.core.registrator import register_sessions
 
@@ -77,7 +78,7 @@ async def process() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("-a", "--action", type=int, help="Action to perform")
 
-    logger.info(f"Detected {len(get_session_names())} sessions | {len(get_proxies())} proxies")
+    logger.info("MASTER", f"Detected {len(get_session_names())} sessions | {len(get_proxies())} proxies")
 
     action = parser.parse_args().action
 
@@ -88,9 +89,9 @@ async def process() -> None:
             action = input("> ")
 
             if not action.isdigit():
-                logger.warning("Action must be number")
+                logger.warning("MASTER", "Action must be number")
             elif action not in ["1", "2"]:
-                logger.warning("Action must be 1 or 2")
+                logger.warning("MASTER", "Action must be 1 or 2")
             else:
                 action = int(action)
                 break
@@ -104,10 +105,17 @@ async def process() -> None:
         await register_sessions()
 
 
+async def test():
+    print("Started a task")
+    import random
+    await asyncio.sleep(random.randint(2, 5))
+    print("Ended a task")
 
 
 async def run_tasks(tg_clients: list[Client]):
     proxies = get_proxies()
+    p = [ProxyConnector().from_url(proxy) for proxy in proxies]
+    # http_client = CloudflareScraper(headers=headers, connector=proxy_conn)
     proxies_cycle = cycle(proxies) if proxies else None
     tasks = [
         asyncio.create_task(
@@ -118,5 +126,17 @@ async def run_tasks(tg_clients: list[Client]):
         )
         for tg_client in tg_clients
     ]
-
     await asyncio.gather(*tasks)
+    #
+    # tasks = [
+    #     asyncio.create_task(
+    #         test()
+    #     )
+    #     for tg_client in tg_clients
+    # ]
+    # import time
+    # start = time.time()
+    # await asyncio.gather(*tasks)
+    # end = time.time()
+    #
+    # print(f"Done {int(end - start)}")

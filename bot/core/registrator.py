@@ -1,7 +1,7 @@
 from pyrogram import Client
 
 from bot.config import settings
-from bot.utils import logger
+import bot.utils.console_logger as logger
 
 
 async def register_sessions() -> None:
@@ -12,9 +12,13 @@ async def register_sessions() -> None:
         raise ValueError("API_ID and API_HASH not found in the .env file.")
 
     session_name = input('\nEnter the session name (press Enter to exit): ')
+    blum_username = input('\nEnter the Blum username (press Enter if not registered in Blum): ')
 
     if not session_name:
         return None
+
+    if not session_name:
+        blum_username = ""
 
     session = Client(
         name=session_name,
