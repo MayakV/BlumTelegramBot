@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from datetime import time, timedelta
 
 
 class Settings(BaseSettings):
@@ -14,6 +15,10 @@ class Settings(BaseSettings):
     REF_ID: str = ''
 
     USE_PROXY_FROM_FILE: bool = False
+
+    BED_TIME: time = time(1)
+    WAKE_UP_TIME: time = time(10)
+    START_DELAY: timedelta = timedelta(hours=1)
 
 
 settings = Settings()
