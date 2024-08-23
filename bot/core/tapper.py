@@ -18,9 +18,10 @@ from bot.config import settings
 
 # from bot.utils import db_logger
 import bot.utils.console_logger as logger
+import bot.core.user_data as ud
 from bot.exceptions import InvalidSession
 from .headers import headers
-from .helper import format_duration
+from .helper import *
 
 
 class Tapper:
@@ -37,7 +38,13 @@ class Tapper:
         self.first_run = None
 
         self.session_ug_dict = self.load_user_agents() or []
-        self.blum_user_data = self.load_user_data() or []
+        self.blum_user_data = ud.load_user_data(self.session_name) or []
+        proxies = [Proxy.from_str(proxy=x.get("proxy").strip()).as_url for x in self.blum_user_data if x["session_name"] == self.session_name]
+        if proxies:
+            self.proxy = proxies[0]
+        else:
+            print("session without proxy")
+            raise ValueError()
 
         headers['User-Agent'] = self.check_user_agent()
         self.blum_username = self.check_username()
@@ -85,23 +92,7 @@ class Tapper:
             return user_agent_str
 
     def save_blum_username(self, username):
-        user_agents_file_name = "blum_user_data.json"
-
-        if not any(session['session_name'] == self.session_name for session in self.blum_user_data):
-            self.blum_user_data.append({"session_name": self.session_name, "blum_username": username})
-            # raise ValueError(f"No Blum data found for session {self.session_name}")
-        else:
-            def update_username(user_data, session_name, new_username):
-                if user_data["session_name"] == session_name:
-                    user_data["blum_username"] = new_username
-                return user_data
-
-            self.blum_user_data = [update_username(x, self.session_name, username) for x in self.blum_user_data]
-
-        with open(user_agents_file_name, 'w') as user_data:
-            json.dump(self.blum_user_data, user_data, indent=4)
-
-            logger.success(self.session_name, "Blum user data saved successfully")
+        return ud.save_blum_username(self.session_name, username)
 
     def load_user_agents(self):
         user_agents_file_name = "user_agents.json"
@@ -120,23 +111,6 @@ class Tapper:
 
         return []
 
-    def load_user_data(self):
-        user_data_file_name = "blum_user_data.json"
-
-        try:
-            with open(user_data_file_name, 'r') as user_data:
-                session_data = json.load(user_data)
-                if isinstance(session_data, list):
-                    return session_data
-
-        except FileNotFoundError:
-            logger.warning(self.session_name, "Blum user data file not found, creating...")
-
-        except json.JSONDecodeError:
-            logger.warning(self.session_name, "Blum user data file is empty or corrupted.")
-
-        return []
-
     def check_user_agent(self):
         load = next(
             (session['user_agent'] for session in self.session_ug_dict if session['session_name'] == self.session_name),
@@ -149,12 +123,12 @@ class Tapper:
 
     def check_username(self):
         load = next(
-            (session['blum_username'] for session in self.blum_user_data if
+            (session.get('blum_username') for session in self.blum_user_data if
              session['session_name'] == self.session_name),
             None)
 
-        if load is None:
-            return self.save_user_agent()
+        # if load is None:
+        #     return self.save_user_agent()
 
         return load
 
@@ -200,7 +174,7 @@ class Tapper:
             ))
 
             auth_url = web_view.url
-            print(auth_url)
+            # print(auth_url)
             tg_web_data = unquote(
                 string=auth_url.split('tgWebAppData=', maxsplit=1)[1].split('&tgWebAppVersion', maxsplit=1)[0])
 
@@ -226,84 +200,78 @@ class Tapper:
             logger.error(self.session_name, f"Unknown error during Authorization: {error}")
             await asyncio.sleep(delay=3)
 
+    async def sign_up(self, initdata, http_client):
+        self.blum_username = self.generate_random_username()
+        await self.save_blum_username(self.blum_username)
+
+        json_data = {"query": initdata, "username": self.blum_username,
+                     "referralToken": self.start_param.split('_')[1]}
+
+        resp = await http_client.post("https://gateway.blum.codes/v1/auth/provider"
+                                      "/PROVIDER_TELEGRAM_MINI_APP",
+                                      json=json_data, ssl=False)
+        resp_json = await resp.json()
+        if resp.status != 200:
+            self.debug(f'login failed with status {resp.status}. {await resp.text()}')
+        else:
+            self.success(f'Registered using ref - {self.start_param} and nickname - {self.blum_username}')
+        return resp_json
+
+    async def authenticate(self, initdata, http_client):
+        json_data = {"query": initdata}
+        resp = await http_client.post("https://gateway.blum.codes/v1/auth/provider"
+                                      "/PROVIDER_TELEGRAM_MINI_APP",
+                                      json=json_data, ssl=False)
+        resp_json = await resp.json()
+        if resp_json.get("token").get("access"):
+            self.success(f"Logged into {self.blum_username} account successfully")
+            return resp_json.get("token").get("access"), resp_json.get("token").get("refresh")
+        else:
+            self.error(f"Failed to authenticate into {self.blum_username}, {resp.status}. {await resp.text()}")
+            return None, None
+
     async def login(self, http_client: aiohttp.ClientSession, initdata):
-        try:
-            # if settings.USE_REF is False:
-            if self.blum_username:
-                json_data = {"query": initdata}
-                resp = await http_client.post("https://gateway.blum.codes/v1/auth/provider"
-                                              "/PROVIDER_TELEGRAM_MINI_APP",
-                                              json=json_data, ssl=False)
-                self.debug(f'login text {await resp.text()}')
-                resp_json = await resp.json()
-
-                return resp_json.get("token").get("access"), resp_json.get("token").get("refresh")
-
+        # access_token, refresh = await self.authenticate(initdata, http_client)
+        if self.blum_username:
+            access_token, refresh = await self.sign_up(initdata, http_client)
+            if access_token:
+                return access_token, refresh
             else:
-                self.blum_username = self.generate_random_username()
-                self.save_blum_username(self.blum_username)
-
-                json_data = {"query": initdata, "username": self.blum_username,
-                             "referralToken": self.start_param.split('_')[1]}
-
-                resp = await http_client.post("https://gateway.blum.codes/v1/auth/provider"
-                                              "/PROVIDER_TELEGRAM_MINI_APP",
-                                              json=json_data, ssl=False)
-                resp_json = await resp.json()
-                if resp.status != 200:
-                    self.debug(f'login failed with status {resp.status}. {await resp.text()}')
-
+                self.error("Could bit authenticate", self.blum_username)
+                raise ValueError("Failed to authenticate")
+        else:
+            for x in range(5):
+                resp_json = await self.sign_up(initdata, http_client)
                 if resp_json.get("message") == "rpc error: code = AlreadyExists desc = Username is not available":
-                    while True:
-                        name = self.username
-                        rand_letters = ''.join(random.choices(string.ascii_lowercase, k=random.randint(3, 8)))
-                        new_name = name + rand_letters
-
-                        json_data = {"query": initdata, "username": new_name,
-                                     "referralToken": self.start_param.split('_')[1]}
-
-                        resp = await http_client.post(
-                            "https://gateway.blum.codes/v1/auth/provider/PROVIDER_TELEGRAM_MINI_APP",
-                            json=json_data, ssl=False)
-                        self.debug(f'login text {await resp.text()}')
-                        resp_json = await resp.json()
-
-                        if resp_json.get("token"):
-                            self.success(f'Registered using ref - {self.start_param} and nickname - {new_name}')
-                            return resp_json.get("token").get("access"), resp_json.get("token").get("refresh")
-
-                        elif resp_json.get("message") == 'account is already connected to another user':
-
-                            json_data = {"query": initdata}
-                            resp = await http_client.post("https://gateway.blum.codes/v1/auth/provider"
-                                                          "/PROVIDER_TELEGRAM_MINI_APP",
-                                                          json=json_data, ssl=False)
-                            resp_json = await resp.json()
-                            self.debug(f'login text {await resp.text()}')
-                            return resp_json.get("token").get("access"), resp_json.get("token").get("refresh")
-
-                        else:
-                            self.info(f'Username taken, retrying register with new name')
-                            await asyncio.sleep(1)
-
-                elif resp_json.get("message") == 'account is already connected to another user':
-
-                    json_data = {"query": initdata}
-                    resp = await http_client.post("https://gateway.blum.codes/v1/auth/provider"
-                                                  "/PROVIDER_TELEGRAM_MINI_APP",
-                                                  json=json_data, ssl=False)
-                    self.debug(f'login text {await resp.text()}')
-                    resp_json = await resp.json()
-
+                    continue
+                if resp_json.get("token"):
                     return resp_json.get("token").get("access"), resp_json.get("token").get("refresh")
+                else:
+                    self.error(f"Login error for {self.blum_username}, {resp_json.status}, {await resp_json.text()}")
+            raise ValueError("Failed to sign up")
 
-                elif resp_json.get("token"):
 
-                    self.success(f'Registered using ref - {self.start_param} and nickname - {self.username}')
-                    return resp_json.get("token").get("access"), resp_json.get("token").get("refresh")
-
-        except Exception as error:
-            logger.error(self.session_name, f"Login error {error}")
+    # async def login(self, http_client: aiohttp.ClientSession, initdata):
+    #     try:
+    #         if self.blum_username:
+    #             resp_json = await self.authenticate(initdata, http_client)
+    #         else:
+    #             resp_json = await self.sign_up(initdata, http_client)
+    #             if resp_json.get("message") == "rpc error: code = AlreadyExists desc = Username is not available":
+    #                 while True:
+    #                     resp_json = await self.sign_up(initdata, http_client)
+    #                     if resp_json.get("message") == "rpc error: code = AlreadyExists desc = Username is not available":
+    #                         self.info(f"Name {self.blum_username} is not availible (Already exists)")
+    #                         continue
+    #                     elif resp_json.get("message") == 'account is already connected to another user':
+    #                         resp_json = await self.authenticate(initdata, http_client)
+    #                     if resp_json.get("token"):
+    #                         return resp_json.get("token").get("access"), resp_json.get("token").get("refresh")
+    #                     else:
+    #                         self.info(f'Username taken, retrying register with new name')
+    #                         await asyncio.sleep(1)
+    #     except Exception as error:
+    #         logger.error(self.session_name, f"Login error {error}")
 
     async def claim_task(self, http_client: aiohttp.ClientSession, task):
         try:
@@ -349,20 +317,20 @@ class Tapper:
 
                 if not game_id or game_id == "cannot start game":
                     logger.info(self.session_name, "Couldn't start play in game!"
-                                f" play_passes: {play_passes}")
+                                                   f" play_passes: {play_passes}")
                     break
                 else:
-                    self.success("Started playing game")
+                    self.success(f"Started playing game")
 
                 await asyncio.sleep(random.uniform(30, 40))
 
                 msg, points = await self.claim_game(game_id=game_id, http_client=http_client)
                 if isinstance(msg, bool) and msg:
                     logger.info(self.session_name, f"Finish play in game!"
-                                f" reward: {points}")
+                                                   f" reward: {points}, {play_passes} play passes left")
                 else:
                     logger.info(self.session_name, "Couldn't play game,"
-                                f" msg: {msg} play_passes: {play_passes}")
+                                                   f" msg: {msg} play_passes: {play_passes}")
                     break
 
                 await asyncio.sleep(random.uniform(30, 40))
@@ -417,7 +385,7 @@ class Tapper:
             resp = await http_client.post("https://game-domain.blum.codes/api/v1/farming/start", ssl=False)
 
             if resp.status != 200:
-                resp = await http_client.post("https://game-domain.blum.codes/api/v1/farming/start", ssl=False)
+                self.error(f"Error occurred during start: {e}")
         except Exception as e:
             self.error(f"Error occurred during start: {e}")
 
@@ -502,17 +470,18 @@ class Tapper:
         except Exception as error:
             logger.error(self.session_name, f"Proxy: {proxy} | Error: {error}")
 
-    async def run(self, proxy: str | None) -> None:
+# proxy: str | None
+    async def run(self) -> None:
         access_token = None
         refresh_token = None
         login_need = True
 
-        proxy_conn = ProxyConnector().from_url(proxy) if proxy else None
+        proxy_conn = ProxyConnector().from_url(self.proxy) if self.proxy else None
 
         http_client = CloudflareScraper(headers=headers, connector=proxy_conn)
 
-        if proxy:
-            await self.check_proxy(http_client=http_client, proxy=proxy)
+        if self.proxy:
+            await self.check_proxy(http_client=http_client, proxy=self.proxy)
 
         # print(init_data)
 
@@ -522,14 +491,13 @@ class Tapper:
                     if "Authorization" in http_client.headers:
                         del http_client.headers["Authorization"]
 
-                    init_data = await self.get_tg_web_data(proxy=proxy)
+                    init_data = await self.get_tg_web_data(proxy=self.proxy)
 
                     access_token, refresh_token = await self.login(http_client=http_client, initdata=init_data)
 
                     http_client.headers["Authorization"] = f"Bearer {access_token}"
 
                     if self.first_run is not True:
-                        self.success("Logged in successfully")
                         self.first_run = True
 
                     login_need = False
@@ -560,19 +528,29 @@ class Tapper:
                     if start_time is None and end_time is None:
                         await self.start(http_client=http_client)
                         self.info(f"<lc>[FARMING]</lc> Start farming!")
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(3)
 
                     elif (start_time is not None and end_time is not None and timestamp is not None and
                           timestamp >= end_time):
                         timestamp, balance = await self.claim(http_client=http_client)
                         self.success(f"<lc>[FARMING]</lc> Claimed reward! Balance: {balance}")
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(2)
 
                     elif end_time is not None and timestamp is not None:
-                        sleep_duration = end_time - timestamp
-                        self.info(f"<lc>[FARMING]</lc> Sleep {format_duration(sleep_duration)}")
+                        end_date = format_date(end_time)
+                        end_date = add_random_time(end_date, settings.START_DELAY)
+                        if settings.WAKE_UP_TIME > end_date.time() > settings.BED_TIME:
+                            end_date = add_random_time(end_date.replace(
+                                day=end_date.day + 1 if end_date.hour > settings.WAKE_UP_TIME.hour else end_date.day,
+                                hour=settings.WAKE_UP_TIME.hour,
+                                minute=settings.WAKE_UP_TIME.minute), settings.START_DELAY)
+                        # sleep_duration = (end_date - datetime.datetime.min).total_seconds() - timestamp
+                        sleep_duration = int(end_date.timestamp()) - timestamp
+                        # self.info(f"<lc>[FARMING]</lc> Sleep {format_duration(sleep_duration)}")
+                        self.success(f"<lc>[FARMING]</lc> Next login in {format_duration(sleep_duration)}",
+                                     str(end_date))
                         login_need = True
-                        await asyncio.sleep(sleep_duration)
+                        await asyncio.sleep(120)
 
                 except Exception as e:
                     self.error(f"<lc>[FARMING]</lc> Error in farming management: {e}")
@@ -584,9 +562,10 @@ class Tapper:
                 logger.error(self.session_name, f"Unknown error: {error}")
                 await asyncio.sleep(delay=3)
 
-
-async def run_tapper(tg_client: Client, proxy: str | None):
+# proxy: str | None
+async def run_tapper(tg_client: Client):
     try:
-        await Tapper(tg_client=tg_client).run(proxy=proxy)
+        # proxy=proxy
+        await Tapper(tg_client=tg_client).run()
     except InvalidSession:
         logger.error("MASTER", f"{tg_client.name} | Invalid Session")

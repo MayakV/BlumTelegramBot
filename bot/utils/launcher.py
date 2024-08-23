@@ -78,7 +78,8 @@ async def process() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("-a", "--action", type=int, help="Action to perform")
 
-    logger.info("MASTER", f"Detected {len(get_session_names())} sessions | {len(get_proxies())} proxies")
+    logger.info("MASTER", f"Detected {len(get_session_names())} sessions")
+    # logger.info("MASTER", f"Starting bot")
 
     action = parser.parse_args().action
 
@@ -113,15 +114,16 @@ async def test():
 
 
 async def run_tasks(tg_clients: list[Client]):
-    proxies = get_proxies()
-    p = [ProxyConnector().from_url(proxy) for proxy in proxies]
+    # proxies = get_proxies()
+    # p = [ProxyConnector().from_url(proxy) for proxy in proxies]
     # http_client = CloudflareScraper(headers=headers, connector=proxy_conn)
-    proxies_cycle = cycle(proxies) if proxies else None
+    # proxies_cycle = cycle(proxies) if proxies else None
+    # was a run_tapper parameter
+    # proxy = next(proxies_cycle) if proxies_cycle else None,
     tasks = [
         asyncio.create_task(
             run_tapper(
-                tg_client=tg_client,
-                proxy=next(proxies_cycle) if proxies_cycle else None,
+                tg_client=tg_client
             )
         )
         for tg_client in tg_clients
