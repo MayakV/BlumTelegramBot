@@ -26,9 +26,11 @@ def add_user(cursor,
         ''')
 
 
-def update_user(session_name: str,
+def update_user(cursor,
+                session_name: str,
                 blum_username: str = "",
                 user_agent: str = "",
+                next_login_date: datetime = None,
                 last_login_date: datetime.datetime = None):
     updated_fields = []
     if blum_username:
@@ -37,6 +39,8 @@ def update_user(session_name: str,
         updated_fields.append(('user_agent', user_agent))
     if last_login_date:
         updated_fields.append(('last_login_date', last_login_date))
+    if next_login_date:
+        updated_fields.append(('next_login_date', next_login_date))
     if updated_fields:
         update_clause = ', '.join([f"{x[0]} = {x[1]}" for x in updated_fields])
         cursor.execute(f'''
@@ -44,3 +48,12 @@ def update_user(session_name: str,
                  WHERE session_name = {session_name}
             ''')
 
+
+def get_users(cursor,
+              sessions: list[str] = None,
+              due_to_login=True):
+    cursor.execute(f'''
+            SELECT session_name, blum_username, user_agent, last_login_date, date_inserted
+            FROM users
+            WHERE next_login_date < {1}
+        ''')

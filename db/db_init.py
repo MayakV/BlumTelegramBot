@@ -31,11 +31,12 @@ create_table_if_not_exists("events", {'id': 'INTEGER PRIMARY KEY',
                                       'message': 'TEXT',
                                       'data': 'TEXT',
                                       'date_inserted': 'DATETIME'})
-create_table_if_not_exists("users", {'user_id': 'INTEGER PRIMARY KEY',
-                                     'session_name': 'TEXT',
+create_table_if_not_exists("users", {
+                                     'session_name': 'TEXT PRIMARY KEY',
                                      'blum_username': 'TEXT',
                                      'user_agent': 'TEXT',
                                      'last_login_date': 'DATETIME',
+                                     'next_login_date': 'DATETIME',
                                      'date_inserted': 'DATETIME'})
 create_table_if_not_exists("proxies", {'id': 'INTEGER PRIMARY KEY',
                                      'proxy_text': 'TEXT',
